@@ -215,8 +215,8 @@ impl TaskControlBlock {
                     parent: Some(Arc::downgrade(self)),
                     children: Vec::new(),
                     exit_code: 0,
-                    heap_bottom: user_sp,
-                    program_brk: user_sp,
+                    heap_bottom: parent_inner.heap_bottom,
+                    program_brk: parent_inner.program_brk,
                     syscall_times: Vec::new(),
                     time: get_time_ms(),
                     stride: 0,
@@ -232,7 +232,7 @@ impl TaskControlBlock {
             entry_point,
             user_sp,
             KERNEL_SPACE.exclusive_access().token(),
-            self.kernel_stack.get_top(),
+            kernel_stack_top,
             trap_handler as usize,
         );
 
