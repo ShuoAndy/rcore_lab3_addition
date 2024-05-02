@@ -9,7 +9,11 @@ use crate::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
         suspend_current_and_run_next, TaskStatus,
     },
+    timer::get_time_us,
 };
+use crate::config::PAGE_SIZE;
+
+use crate::mm::{MapPermission, PageTable, VirtAddr, VirtPageNum, PhysAddr};
 
 #[repr(C)]
 #[derive(Debug)]
@@ -22,11 +26,11 @@ pub struct TimeVal {
 #[allow(dead_code)]
 pub struct TaskInfo {
     /// Task status in it's life cycle
-    status: TaskStatus,
+    pub status: TaskStatus,
     /// The numbers of syscall called by task
-    syscall_times: [u32; MAX_SYSCALL_NUM],
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
     /// Total running time of task
-    time: usize,
+    pub time: usize,
 }
 
 /// task exits and submit an exit code
@@ -118,40 +122,95 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel: sys_get_time");
+    let va = VirtAddr(_ts as usize);
+    let offset = va.page_offset();
+    let vpn = va.floor();
+    let ppn = PageTable::from_token(current_user_token()).translate(vpn).map(|entry| entry.ppn()).unwrap();
+    let pa = PhysAddr(ppn.0 * PAGE_SIZE + offset);
+    
+    let us = get_time_us();
+    let ts = pa.0 as *mut TimeVal;
+    unsafe {
+            *ts = TimeVal {
+            sec: us / 1_000_000,
+            usec: us % 1_000_000,
+        };
+    }
+    0
 }
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
 pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_task_info NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel: sys_task_info");
+    let va = VirtAddr(_ti as usize);
+    let offset = va.page_offset();
+    let vpn = va.floor();
+    let ppn = PageTable::from_token(current_user_token()).translate(vpn).map(|entry| entry.ppn()).unwrap();
+    let pa = PhysAddr(ppn.0 * PAGE_SIZE + offset);
+
+    let ti = pa.0 as *mut TaskInfo;
+    current_task().unwrap().get_current_task_info(ti);
+    0
 }
+
 
 /// YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    if _start & (PAGE_SIZE - 1) != 0 {
+        println!("the start address should be page-aligned");
+        return -1;
+    }
+    if _port & !0x7 != 0{
+        println!("the remaining bits of the port must be zero");
+        return -1;
+    }
+    if _port & 0x7 == 0{
+        println!("this memory is meaningless");
+        return -1;
+    }
+    let task = current_task().unwrap();
+    let mut inner = task.inner_exclusive_access();
+    let memory_set = &mut inner.memory_set;
+    let start_vpn = VirtPageNum::from(VirtAddr(_start).floor());
+    let end_vpn = VirtPageNum::from(VirtAddr(_start + _len).ceil());
+    for vpn in start_vpn.0 .. end_vpn.0 {
+        if let Some(pte) = memory_set.translate(VirtPageNum(vpn)) {
+            if pte.is_valid() {
+                println!("The page has already been mapped");
+                return -1;
+            }   }
+    }
+
+    let permission = MapPermission::from_bits((_port as u8) << 1).unwrap() | MapPermission::U;
+    memory_set.insert_framed_area(VirtAddr(_start), VirtAddr(_start + _len), permission);
+    0
 }
 
 /// YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    if _start & (PAGE_SIZE - 1) != 0 {
+        println!("the start address should be page-aligned");
+        return -1;
+    }
+
+    let task = current_task().unwrap();
+    let mut inner = task.inner_exclusive_access();
+    let memory_set = &mut inner.memory_set;
+    let start_vpn = VirtPageNum::from(VirtAddr(_start).floor());
+    let end_vpn = VirtPageNum::from(VirtAddr(_start + _len).ceil());
+    for vpn in start_vpn.0 .. end_vpn.0 {
+        if let Some(pte) = memory_set.translate(VirtPageNum(vpn)) {
+            if !pte.is_valid() {
+                println!("The page hasn't been mapped");
+                return -1;
+            }
+        }
+    }
+    memory_set.delete_framed_area(VirtAddr(_start), VirtAddr(_start + _len));
+    0
 }
 
 /// change data segment size
@@ -167,18 +226,29 @@ pub fn sys_sbrk(size: i32) -> isize {
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
 pub fn sys_spawn(_path: *const u8) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    let token = current_user_token();
+    let path = translated_str(token, _path);
+    if let Some(data) = get_app_data_by_name(path.as_str()) {
+        let current_task = current_task().unwrap();
+        let new_task = current_task.spawn(data);
+        let new_pid = new_task.pid.0;
+        // modify trap context of new_task, because it returns immediately after switching
+        let trap_cx = new_task.inner_exclusive_access().get_trap_cx();
+        trap_cx.x[10] = 0;
+        // add new task to scheduler
+        add_task(new_task);
+        new_pid as isize
+    } else {
+        -1
+    }
 }
 
 // YOUR JOB: Set task priority.
 pub fn sys_set_priority(_prio: isize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    if _prio >= 2 {
+        current_task().unwrap().inner_exclusive_access().prio = _prio;
+        _prio
+    } else {
+        -1
+    }
 }

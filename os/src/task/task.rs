@@ -8,6 +8,8 @@ use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::cell::RefMut;
+use crate::syscall::TaskInfo;
+use crate::timer::get_time_ms;
 
 /// Task control block structure
 ///
@@ -68,6 +70,18 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// The numbers of syscall called by task
+    pub syscall_times: Vec<(usize, u32)>,
+
+    /// Total running time of task
+    pub time: usize,
+
+    /// Stride scheduling
+    pub stride: usize, 
+
+    /// Priority scheduling
+    pub prio: isize, 
 }
 
 impl TaskControlBlockInner {
@@ -118,6 +132,10 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    syscall_times: Vec::new(),
+                    time: get_time_ms(),
+                    stride: 0,
+                    prio: 16,
                 })
             },
         };
@@ -132,6 +150,96 @@ impl TaskControlBlock {
         );
         task_control_block
     }
+
+    /// Update the syscall times
+    pub fn update_syscall_times(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let mut flag = false;
+        for syscall_time in &mut inner.syscall_times {
+            if syscall_time.0 == syscall_id {
+                flag = true;
+                syscall_time.1 += 1;
+                break
+            }
+        }
+
+        if flag == false {
+            inner.syscall_times.push((syscall_id, 1));
+        }  
+
+    }
+
+    /// Get the task information of current `Running` task.
+    pub fn get_current_task_info(&self, ti: *mut TaskInfo) {
+        let inner = self.inner.exclusive_access();
+        let time = inner.time;
+        let syscall_times_vec = inner.syscall_times.clone();
+
+        let mut syscall_times_array = [0; 500];
+        for syscall in syscall_times_vec.iter() {
+            syscall_times_array[syscall.0] = syscall.1;
+        }
+
+        unsafe {
+            *ti = TaskInfo {
+                status: TaskStatus::Running,
+                syscall_times: syscall_times_array,
+                time: get_time_ms() - time,
+            };
+        }
+    }
+
+    /// parent process spawn the child process
+    pub fn spawn(self: &Arc<TaskControlBlock>, elf_data: &[u8]) -> Arc<TaskControlBlock> {
+        let mut parent_inner = self.inner_exclusive_access();
+
+        let (memory_set, user_sp, entry_point) = MemorySet::from_elf(elf_data);
+        let trap_cx_ppn = memory_set
+            .translate(VirtAddr::from(TRAP_CONTEXT_BASE).into())
+            .unwrap()
+            .ppn();
+        let pid_handle = pid_alloc();
+        let kernel_stack = kstack_alloc();
+        let kernel_stack_top = kernel_stack.get_top();
+
+        let task_control_block = Arc::new(TaskControlBlock {
+            pid: pid_handle,
+            kernel_stack,
+            inner: unsafe {
+                UPSafeCell::new(TaskControlBlockInner {
+                    trap_cx_ppn,
+                    base_size: user_sp,
+                    task_cx: TaskContext::goto_trap_return(kernel_stack_top),
+                    task_status: TaskStatus::Ready,
+                    memory_set,
+                    parent: Some(Arc::downgrade(self)),
+                    children: Vec::new(),
+                    exit_code: 0,
+                    heap_bottom: user_sp,
+                    program_brk: user_sp,
+                    syscall_times: Vec::new(),
+                    time: get_time_ms(),
+                    stride: 0,
+                    prio: 16,
+                })
+            },
+        });
+        // add child
+        parent_inner.children.push(task_control_block.clone());
+
+        let trap_cx = task_control_block.inner_exclusive_access().get_trap_cx();
+        *trap_cx = TrapContext::app_init_context(
+            entry_point,
+            user_sp,
+            KERNEL_SPACE.exclusive_access().token(),
+            self.kernel_stack.get_top(),
+            trap_handler as usize,
+        );
+
+        // return
+        task_control_block
+    }
+
 
     /// Load a new elf to replace the original application address space and start execution
     pub fn exec(&self, elf_data: &[u8]) {
@@ -191,6 +299,10 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    syscall_times: Vec::new(),
+                    time: get_time_ms(),
+                    stride: 0,
+                    prio: 16,
                 })
             },
         });

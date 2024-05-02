@@ -60,6 +60,27 @@ impl MemorySet {
             None,
         );
     }
+    /// Assume that no conflicts.
+    pub fn delete_framed_area(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+    ) {
+        self.delete(
+            start_va, end_va
+        );
+    }
+    fn delete(&mut self, start_va: VirtAddr, end_va: VirtAddr) {
+        for (i,area_removed) in self.areas.iter_mut().enumerate() {
+            if (area_removed.vpn_range.get_start() == start_va.floor()) && (area_removed.vpn_range.get_end() == end_va.ceil()){
+                area_removed.unmap(&mut self.page_table);
+                self.areas.remove(i);
+                break;
+            }
+        }
+    }
+
+    
     /// remove a area
     pub fn remove_area_with_start_vpn(&mut self, start_vpn: VirtPageNum) {
         if let Some((idx, area)) = self
