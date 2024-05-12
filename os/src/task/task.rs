@@ -82,6 +82,24 @@ pub struct TaskControlBlockInner {
 
     /// Priority scheduling
     pub prio: isize, 
+
+    /// Estimated Runtime
+    pub runtime: usize,
+
+    /// Whether the process is running
+    pub running: bool,
+
+    /// The last time the process started
+    pub task_last_start_time: usize,
+
+    /// The remaining time of the process
+    pub remain_runtime: isize,
+
+    /// The last time the process yielded
+    pub task_last_yield_time: usize,
+
+    /// The time the process has been waiting
+    pub task_waiting_time: usize,
 }
 
 impl TaskControlBlockInner {
@@ -136,6 +154,12 @@ impl TaskControlBlock {
                     time: get_time_ms(),
                     stride: 0,
                     prio: 16,
+                    runtime: 1000000,
+                    running: false,
+                    task_last_start_time: 0,
+                    remain_runtime: 1000000,
+                    task_last_yield_time: get_time_ms(),
+                    task_waiting_time: 1,
                 })
             },
         };
@@ -190,7 +214,7 @@ impl TaskControlBlock {
     }
 
     /// parent process spawn the child process
-    pub fn spawn(self: &Arc<TaskControlBlock>, elf_data: &[u8]) -> Arc<TaskControlBlock> {
+    pub fn spawn(self: &Arc<TaskControlBlock>, elf_data: &[u8],runtime: usize ) -> Arc<TaskControlBlock> {
         let mut parent_inner = self.inner_exclusive_access();
 
         let (memory_set, user_sp, entry_point) = MemorySet::from_elf(elf_data);
@@ -221,6 +245,12 @@ impl TaskControlBlock {
                     time: get_time_ms(),
                     stride: 0,
                     prio: 16,
+                    runtime: runtime,
+                    running: false,
+                    task_last_start_time: get_time_ms(),
+                    remain_runtime: runtime as isize,
+                    task_last_yield_time: get_time_ms(),
+                    task_waiting_time: 1,
                 })
             },
         });
@@ -242,7 +272,7 @@ impl TaskControlBlock {
 
 
     /// Load a new elf to replace the original application address space and start execution
-    pub fn exec(&self, elf_data: &[u8]) {
+    pub fn exec(&self, elf_data: &[u8], runtime: usize ) {
         // memory_set with elf program headers/trampoline/trap context/user stack
         let (memory_set, user_sp, entry_point) = MemorySet::from_elf(elf_data);
         let trap_cx_ppn = memory_set
@@ -252,6 +282,10 @@ impl TaskControlBlock {
 
         // **** access current TCB exclusively
         let mut inner = self.inner_exclusive_access();
+        inner.runtime = runtime;
+        inner.remain_runtime = runtime as isize;
+        inner.task_last_start_time = get_time_ms();
+        inner.running = false;
         // substitute memory_set
         inner.memory_set = memory_set;
         // update trap_cx ppn
@@ -303,11 +337,18 @@ impl TaskControlBlock {
                     time: get_time_ms(),
                     stride: 0,
                     prio: 16,
+                    runtime: parent_inner.runtime,
+                    running: false,
+                    task_last_start_time: 0,
+                    remain_runtime: parent_inner.remain_runtime - (get_time_ms() - parent_inner.task_last_start_time + 10) as isize,
+                    task_last_yield_time: get_time_ms(),
+                    task_waiting_time: 1,
                 })
             },
         });
         // add child
         parent_inner.children.push(task_control_block.clone());
+        //println!("{}````{}",parent_inner.remain_runtime,task_control_block.inner_exclusive_access().remain_runtime);
         // modify kernel_sp in trap_cx
         // **** access child PCB exclusively
         let trap_cx = task_control_block.inner_exclusive_access().get_trap_cx();

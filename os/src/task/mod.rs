@@ -24,6 +24,7 @@ mod task;
 use crate::loader::get_app_data_by_name;
 use alloc::sync::Arc;
 use lazy_static::*;
+use crate::timer::get_time_ms;
 pub use manager::{fetch_task, TaskManager};
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
@@ -43,6 +44,8 @@ pub fn suspend_current_and_run_next() {
     // ---- access current TCB exclusively
     let mut task_inner = task.inner_exclusive_access();
     let task_cx_ptr = &mut task_inner.task_cx as *mut TaskContext;
+    task_inner.remain_runtime -= (get_time_ms() - task_inner.task_last_start_time) as isize;
+    task_inner.task_last_yield_time = get_time_ms();
     // Change status to Ready
     task_inner.task_status = TaskStatus::Ready;
     drop(task_inner);
@@ -53,6 +56,7 @@ pub fn suspend_current_and_run_next() {
     // jump to scheduling cycle
     schedule(task_cx_ptr);
 }
+
 
 /// pid of usertests app in make run TEST=1
 pub const IDLE_PID: usize = 0;
@@ -114,4 +118,12 @@ lazy_static! {
 ///Add init process to the manager
 pub fn add_initproc() {
     add_task(INITPROC.clone());
+}
+
+///Set the current task to running or not
+pub fn set_task_running(isrunning: bool){
+    let task = current_task().unwrap();
+    let mut task_inner = task.inner_exclusive_access();
+    task_inner.running = isrunning;
+    drop(task_inner);
 }

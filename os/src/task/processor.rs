@@ -11,7 +11,7 @@ use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
 use lazy_static::*;
-
+use crate::timer::get_time_ms;
 /// Processor management structure
 pub struct Processor {
     ///The task currently executing on the current processor
@@ -61,6 +61,9 @@ pub fn run_tasks() {
             let mut task_inner = task.inner_exclusive_access();
             let next_task_cx_ptr = &task_inner.task_cx as *const TaskContext;
             task_inner.task_status = TaskStatus::Running;
+            task_inner.task_waiting_time += get_time_ms() - task_inner.task_last_yield_time;
+            task_inner.running = true;
+            task_inner.task_last_start_time = get_time_ms();
             // release coming task_inner manually
             drop(task_inner);
             // release coming task TCB manually

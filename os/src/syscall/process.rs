@@ -7,9 +7,9 @@ use crate::{
     mm::{translated_refmut, translated_str},
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next, TaskStatus,
+        suspend_current_and_run_next, TaskStatus, set_task_running,
     },
-    timer::get_time_us,
+    timer::{get_time_ms,get_time_us},
 };
 use crate::config::PAGE_SIZE;
 
@@ -42,7 +42,7 @@ pub fn sys_exit(exit_code: i32) -> ! {
 
 /// current task gives up resources for other tasks
 pub fn sys_yield() -> isize {
-    trace!("kernel:pid[{}] sys_yield", current_task().unwrap().pid.0);
+    set_task_running(false);
     suspend_current_and_run_next();
     0
 }
@@ -53,7 +53,6 @@ pub fn sys_getpid() -> isize {
 }
 
 pub fn sys_fork() -> isize {
-    trace!("kernel:pid[{}] sys_fork", current_task().unwrap().pid.0);
     let current_task = current_task().unwrap();
     let new_task = current_task.fork();
     let new_pid = new_task.pid.0;
@@ -67,15 +66,20 @@ pub fn sys_fork() -> isize {
     new_pid as isize
 }
 
-pub fn sys_exec(path: *const u8) -> isize {
+pub fn sys_exec(path: *const u8, runtime: usize) -> isize {
     trace!("kernel:pid[{}] sys_exec", current_task().unwrap().pid.0);
     let token = current_user_token();
     let path = translated_str(token, path);
     if let Some(data) = get_app_data_by_name(path.as_str()) {
         let task = current_task().unwrap();
-        task.exec(data);
+        task.exec(data, runtime);
+        let mut task_inner = task.inner_exclusive_access();
+        task_inner.remain_runtime -= (get_time_ms() - task_inner.task_last_start_time) as isize;
+        drop(task_inner);
+        suspend_current_and_run_next();
         0
     } else {
+        suspend_current_and_run_next();
         -1
     }
 }
@@ -225,20 +229,22 @@ pub fn sys_sbrk(size: i32) -> isize {
 
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
-pub fn sys_spawn(_path: *const u8) -> isize {
+pub fn sys_spawn(_path: *const u8,runtime: usize) -> isize {
     let token = current_user_token();
     let path = translated_str(token, _path);
     if let Some(data) = get_app_data_by_name(path.as_str()) {
         let current_task = current_task().unwrap();
-        let new_task = current_task.spawn(data);
+        let new_task = current_task.spawn(data, runtime);
         let new_pid = new_task.pid.0;
         // modify trap context of new_task, because it returns immediately after switching
         let trap_cx = new_task.inner_exclusive_access().get_trap_cx();
         trap_cx.x[10] = 0;
         // add new task to scheduler
         add_task(new_task);
+        suspend_current_and_run_next();
         new_pid as isize
     } else {
+        suspend_current_and_run_next();
         -1
     }
 }

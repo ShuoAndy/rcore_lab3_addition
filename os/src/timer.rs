@@ -1,4 +1,10 @@
 //! RISC-V timer-related functionality
+use lazy_static::*;
+use crate::sync::UPSafeCell;
+use alloc::collections::BinaryHeap;
+use crate::task::TaskControlBlock;
+use alloc::sync::Arc;
+use core::cmp::Ordering;
 
 use crate::config::CLOCK_FREQ;
 use crate::sbi::set_timer;
@@ -32,3 +38,38 @@ pub fn get_time_us() -> usize {
 pub fn set_next_trigger() {
     set_timer(get_time() + CLOCK_FREQ / TICKS_PER_SEC);
 }
+
+/// Timer condition variable
+pub struct TimerCondVar {
+    /// The time when the timer expires
+    pub expire_ms: usize,
+    /// The task to be waken up
+    pub task: Arc<TaskControlBlock>,
+}
+
+impl PartialEq for TimerCondVar {
+    fn eq(&self, other: &Self) -> bool {
+        self.expire_ms == other.expire_ms
+    }
+}
+impl Eq for TimerCondVar {}
+impl PartialOrd for TimerCondVar {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        let a = -(self.expire_ms as isize);
+        let b = -(other.expire_ms as isize);
+        Some(a.cmp(&b))
+    }
+}
+
+impl Ord for TimerCondVar {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+
+lazy_static! {
+    static ref TIMERS: UPSafeCell<BinaryHeap<TimerCondVar>> =
+        unsafe { UPSafeCell::new(BinaryHeap::<TimerCondVar>::new()) };
+}
+
