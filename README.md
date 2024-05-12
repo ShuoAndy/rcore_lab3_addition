@@ -1,51 +1,5 @@
-# rCore-Tutorial-Code-2024S
+# rCore lab3 选做题
 
-### Code
-- [Soure Code of labs for 2024S](https://github.com/LearningOS/rCore-Tutorial-Code-2024S)
-### Documents
+### 题目要求：实现多种(>3种)调度算法：可动态提升/降低优先级的多级反馈队列、实时调度等
 
-- Concise Manual: [rCore-Tutorial-Guide-2024S](https://LearningOS.github.io/rCore-Tutorial-Guide-2024S/)
-
-- Detail Book [rCore-Tutorial-Book-v3](https://rcore-os.github.io/rCore-Tutorial-Book-v3/)
-
-
-### OS API docs of rCore Tutorial Code 2024S
-- [OS API docs of ch1](https://learningos.github.io/rCore-Tutorial-Code-2024S/ch1/os/index.html)
-  AND [OS API docs of ch2](https://learningos.github.io/rCore-Tutorial-Code-2024S/ch2/os/index.html)
-- [OS API docs of ch3](https://learningos.github.io/rCore-Tutorial-Code-2024S/ch3/os/index.html)
-  AND [OS API docs of ch4](https://learningos.github.io/rCore-Tutorial-Code-2024S/ch4/os/index.html)
-- [OS API docs of ch5](https://learningos.github.io/rCore-Tutorial-Code-2024S/ch5/os/index.html)
-  AND [OS API docs of ch6](https://learningos.github.io/rCore-Tutorial-Code-2024S/ch6/os/index.html)
-- [OS API docs of ch7](https://learningos.github.io/rCore-Tutorial-Code-2024S/ch7/os/index.html)
-  AND [OS API docs of ch8](https://learningos.github.io/rCore-Tutorial-Code-2024S/ch8/os/index.html)
-- [OS API docs of ch9](https://learningos.github.io/rCore-Tutorial-Code-2024S/ch9/os/index.html)
-
-### Related Resources
-- [Learning Resource](https://github.com/LearningOS/rust-based-os-comp2022/blob/main/relatedinfo.md)
-
-
-### Build & Run
-
-```bash
-# setup build&run environment first
-$ git clone https://github.com/LearningOS/rCore-Tutorial-Code-2024S.git
-$ cd rCore-Tutorial-Code-2024S
-$ git clone https://github.com/LearningOS/rCore-Tutorial-Test-2024S.git user
-$ cd os
-$ git checkout ch$ID
-# run OS in ch$ID
-$ make run
-```
-Notice: $ID is from [1-9]
-
-### Grading
-
-```bash
-# setup build&run environment first
-$ git clone https://github.com/LearningOS/rCore-Tutorial-Code-2024S.git
-$ cd rCore-Tutorial-Code-2024S
-$ git clone https://github.com/LearningOS/rCore-Tutorial-Checker-2024S.git ci-user
-$ git clone https://github.com/LearningOS/rCore-Tutorial-Test-2024S.git ci-user/user
-$ cd ci-user && make test CHAPTER=$ID
-```
-Notice: $ID is from [3,4,5,6,8]
+由于测例和系统调用有所修改，故而在此存储了选做题对应的代码。该选做题对应的实验报告存储在 reports/lab3_addition.md 中
